@@ -14,7 +14,24 @@ export interface VideoFormat {
   type: 'video' | 'audio' | 'combined';
 }
 
+export interface PlaylistEntry {
+  id: string;
+  title: string;
+  url: string;
+  duration?: number;
+  uploader?: string;
+}
+
+export interface PlaylistMetadata {
+  isPlaylist: true;
+  url: string;
+  title: string;
+  uploader?: string;
+  entries: PlaylistEntry[];
+}
+
 export interface VideoMetadata {
+  isPlaylist: false;
   url: string;
   title: string;
   thumbnail: string;
@@ -89,13 +106,13 @@ startCleanupTask();
 /**
  * Extracts metadata for a given URL using yt-dlp.
  */
-export async function getVideoMetadata(url: string, proxy?: string): Promise<VideoMetadata> {
+export async function getVideoMetadata(url: string, proxy?: string): Promise<VideoMetadata | PlaylistMetadata> {
   const ytdlpPath = await getYtdlpPath();
 
   return new Promise((resolve, reject) => {
     const args = [
-      '--dump-json',
-      '--no-playlist',
+      '--dump-single-json',
+      '--flat-playlist',
       '--no-warnings',
       '-4', // Force IPv4 to avoid slow DNS/IPv6 lookups
     ];
@@ -123,6 +140,41 @@ export async function getVideoMetadata(url: string, proxy?: string): Promise<Vid
 
       try {
         const parsed = JSON.parse(stdoutData);
+        
+        // Check if it's a playlist or multiple videos
+        if (parsed._type === 'playlist' || parsed._type === 'multi_video') {
+          const rawEntries = parsed.entries || [];
+          const entries: PlaylistEntry[] = rawEntries.map((entry: any) => {
+            let entryUrl = entry.url || '';
+            if (entryUrl && !entryUrl.startsWith('http')) {
+              if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                entryUrl = `https://www.youtube.com/watch?v=${entry.id || entry.url}`;
+              }
+            }
+            if (!entryUrl && entry.id) {
+              if (url.includes('youtube.com') || url.includes('youtu.be')) {
+                entryUrl = `https://www.youtube.com/watch?v=${entry.id}`;
+              } else {
+                entryUrl = entry.id;
+              }
+            }
+            return {
+              id: entry.id || crypto.randomUUID(),
+              title: entry.title || 'Untitled Video',
+              url: entryUrl,
+              duration: entry.duration || 0,
+              uploader: entry.uploader || entry.author || ''
+            };
+          }).filter((e: any) => e.url);
+
+          return resolve({
+            isPlaylist: true,
+            url,
+            title: parsed.title || 'Playlist',
+            uploader: parsed.uploader || parsed.uploader_id || '',
+            entries
+          });
+        }
         
         // Curate and group formats
         const rawFormats = parsed.formats || [];
@@ -196,6 +248,7 @@ export async function getVideoMetadata(url: string, proxy?: string): Promise<Vid
 
         // Filter and return metadata
         resolve({
+          isPlaylist: false,
           url,
           title: parsed.title || 'Unknown Title',
           thumbnail: parsed.thumbnail || parsed.thumbnails?.[0]?.url || '',

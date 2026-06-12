@@ -1,17 +1,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, HelpCircle, AlertCircle, RefreshCw, Cpu } from 'lucide-react';
+import { Sparkles, AlertCircle, RefreshCw, Cpu } from 'lucide-react';
 import AnalyzerInput from '@/components/AnalyzerInput';
 import VideoDetails from '@/components/VideoDetails';
 import ProgressTracker from '@/components/ProgressTracker';
 import DownloadHistory, { HistoryItem } from '@/components/DownloadHistory';
-import { VideoMetadata, DownloadJob } from '@/lib/downloader';
+import PlaylistDetails from '@/components/PlaylistDetails';
+import QueueTracker, { QueueItem } from '@/components/QueueTracker';
+import { VideoMetadata, PlaylistMetadata, DownloadJob } from '@/lib/downloader';
 
 export default function Home() {
   const [url, setUrl] = useState('');
   const [proxy, setProxy] = useState('');
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
+  const [playlistMetadata, setPlaylistMetadata] = useState<PlaylistMetadata | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<DownloadJob | null>(null);
@@ -21,6 +24,11 @@ export default function Home() {
     version?: string;
     message?: string;
   }>({ status: 'loading' });
+
+  // Playlist queue states
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState<number>(-1);
+  const [cancelQueue, setCancelQueue] = useState(false);
 
   // Fetch yt-dlp status on mount
   useEffect(() => {
@@ -35,6 +43,113 @@ export default function Home() {
       }
     }
   }, []);
+
+  // Sequential queue runner
+  useEffect(() => {
+    if (currentQueueIndex < 0 || currentQueueIndex >= queue.length || cancelQueue) {
+      if (cancelQueue) {
+        setCurrentQueueIndex(-1);
+        setQueue([]);
+        setCancelQueue(false);
+      }
+      return;
+    }
+
+    const activeItem = queue[currentQueueIndex];
+    if (activeItem.status !== 'pending') return;
+
+    // Start download for active queue item
+    const params = new URLSearchParams({
+      url: activeItem.url,
+      formatId: activeItem.formatId,
+      title: activeItem.title,
+      thumbnail: '',
+      proxy: proxy
+    });
+
+    const eventSource = new EventSource(`/api/download?${params.toString()}`);
+
+    // Update state to 'downloading'
+    setQueue(prev => prev.map((item, idx) => 
+      idx === currentQueueIndex ? { ...item, status: 'downloading' } : item
+    ));
+
+    eventSource.addEventListener('progress', (e: any) => {
+      const job = JSON.parse(e.data);
+      setQueue(prev => prev.map((item, idx) => 
+        idx === currentQueueIndex ? { 
+          ...item, 
+          status: job.status, 
+          progress: job.progress,
+          speed: job.speed,
+          eta: job.eta
+        } : item
+      ));
+    });
+
+    eventSource.addEventListener('complete', (e: any) => {
+      const data = JSON.parse(e.data);
+      eventSource.close();
+
+      // Mark current item completed
+      setQueue(prev => prev.map((item, idx) => 
+        idx === currentQueueIndex ? { ...item, status: 'completed', progress: 100 } : item
+      ));
+
+      // Add to history
+      const newItem: HistoryItem = {
+        id: data.downloadId,
+        title: activeItem.title,
+        thumbnail: '',
+        formatId: activeItem.formatId,
+        url: activeItem.url,
+        timestamp: Date.now()
+      };
+      setHistory(prev => {
+        const updated = [newItem, ...prev].slice(0, 20);
+        localStorage.setItem('downloader_history', JSON.stringify(updated));
+        return updated;
+      });
+
+      // Trigger actual download in the browser
+      window.location.href = `/api/download/file?id=${data.downloadId}`;
+
+      // Move to next item after 1.5 seconds
+      setTimeout(() => {
+        setCurrentQueueIndex(prev => prev + 1);
+      }, 1500);
+    });
+
+    eventSource.addEventListener('failed', (e: any) => {
+      const data = JSON.parse(e.data);
+      eventSource.close();
+
+      // Mark current item failed
+      setQueue(prev => prev.map((item, idx) => 
+        idx === currentQueueIndex ? { ...item, status: 'failed', error: data.error || 'Failed' } : item
+      ));
+
+      // Proceed to the next video after 1.5 seconds (so one failure doesn't break the whole queue)
+      setTimeout(() => {
+        setCurrentQueueIndex(prev => prev + 1);
+      }, 1500);
+    });
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      setQueue(prev => prev.map((item, idx) => 
+        idx === currentQueueIndex ? { ...item, status: 'failed', error: 'Connection lost' } : item
+      ));
+
+      setTimeout(() => {
+        setCurrentQueueIndex(prev => prev + 1);
+      }, 1500);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [currentQueueIndex, queue.length, cancelQueue, proxy]);
 
   const checkYtdlpStatus = async () => {
     setYtdlpStatus({ status: 'loading' });
@@ -72,7 +187,10 @@ export default function Home() {
     setIsAnalyzing(true);
     setError(null);
     setMetadata(null);
+    setPlaylistMetadata(null);
     setActiveJob(null);
+    setQueue([]);
+    setCurrentQueueIndex(-1);
 
     try {
       const res = await fetch('/api/analyze', {
@@ -86,7 +204,11 @@ export default function Home() {
         throw new Error(data.error || 'Failed to analyze URL');
       }
 
-      setMetadata(data);
+      if (data.isPlaylist) {
+        setPlaylistMetadata(data);
+      } else {
+        setMetadata(data);
+      }
     } catch (err: any) {
       setError(err.message || 'Something went wrong while fetching video details.');
     } finally {
@@ -108,7 +230,6 @@ export default function Home() {
 
     const eventSource = new EventSource(`/api/download?${params.toString()}`);
 
-    // Set initial local state for job
     setActiveJob({
       id: '',
       url: metadata.url,
@@ -129,7 +250,6 @@ export default function Home() {
     eventSource.addEventListener('complete', (e: any) => {
       const data = JSON.parse(e.data);
       
-      // Update history in state & localStorage
       const newItem: HistoryItem = {
         id: data.downloadId,
         title: metadata?.title || 'Unknown Video',
@@ -145,11 +265,9 @@ export default function Home() {
         return updated;
       });
 
-      // Update active job status to trigger download in client browser
       setActiveJob(prev => prev ? { ...prev, status: 'completed', progress: 100 } : null);
       eventSource.close();
 
-      // Trigger the file download in the browser
       window.location.href = `/api/download/file?id=${data.downloadId}`;
     });
 
@@ -167,6 +285,25 @@ export default function Home() {
     };
   };
 
+  const handleStartBatchDownload = (selectedVideos: { title: string; url: string }[], formatId: string) => {
+    setError(null);
+    setPlaylistMetadata(null);
+
+    const initialQueue: QueueItem[] = selectedVideos.map((video, idx) => ({
+      id: `item-${idx}-${Date.now()}`,
+      title: video.title,
+      url: video.url,
+      formatId,
+      status: 'pending',
+      progress: 0,
+      speed: '0 B/s',
+      eta: 'Waiting...'
+    }));
+
+    setQueue(initialQueue);
+    setCurrentQueueIndex(0);
+  };
+
   const handleRemoveHistoryItem = (id: string) => {
     const updated = history.filter(item => item.id !== id);
     setHistory(updated);
@@ -177,6 +314,17 @@ export default function Home() {
     setHistory([]);
     localStorage.removeItem('downloader_history');
   };
+
+  const resetAll = () => {
+    setMetadata(null);
+    setPlaylistMetadata(null);
+    setActiveJob(null);
+    setQueue([]);
+    setCurrentQueueIndex(-1);
+    setError(null);
+  };
+
+  const isQueueRunning = currentQueueIndex >= 0 && currentQueueIndex < queue.length;
 
   return (
     <div className="app-container">
@@ -242,26 +390,34 @@ export default function Home() {
               </div>
             )}
 
-            {!activeJob && (
+            {!activeJob && !isQueueRunning && (
               <AnalyzerInput onAnalyze={handleAnalyze} isLoading={isAnalyzing} initialProxy={proxy} />
             )}
 
-            {metadata && !activeJob && (
+            {metadata && !activeJob && !isQueueRunning && (
               <VideoDetails metadata={metadata} onDownloadStart={handleDownloadStart} />
+            )}
+
+            {playlistMetadata && !activeJob && !isQueueRunning && (
+              <PlaylistDetails metadata={playlistMetadata} onStartBatchDownload={handleStartBatchDownload} />
             )}
 
             {activeJob && (
               <ProgressTracker
                 job={activeJob}
-                onReset={() => {
-                  setActiveJob(null);
-                  setMetadata(null);
-                  setError(null);
-                }}
+                onReset={resetAll}
               />
             )}
 
-            {!activeJob && !isAnalyzing && (
+            {isQueueRunning && (
+              <QueueTracker
+                queue={queue}
+                currentIndex={currentQueueIndex}
+                onCancelQueue={() => setCancelQueue(true)}
+              />
+            )}
+
+            {!activeJob && !isQueueRunning && !isAnalyzing && (
               <DownloadHistory
                 history={history}
                 onRemoveItem={handleRemoveHistoryItem}
