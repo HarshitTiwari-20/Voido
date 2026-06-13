@@ -2,7 +2,27 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
 import { getYtdlpPath } from './yt-dlp';
+
+export function getCookiesPath(): string | null {
+  if (process.env.YOUTUBE_COOKIES) {
+    try {
+      const tempCookiesPath = path.join(os.tmpdir(), 'youtube_cookies.txt');
+      fs.writeFileSync(tempCookiesPath, process.env.YOUTUBE_COOKIES, 'utf8');
+      return tempCookiesPath;
+    } catch (e) {
+      console.error('Failed to write YOUTUBE_COOKIES environment variable to temp file:', e);
+    }
+  }
+
+  const localCookiesPath = path.join(process.cwd(), 'cookies.txt');
+  if (fs.existsSync(localCookiesPath)) {
+    return localCookiesPath;
+  }
+
+  return null;
+}
 
 export interface VideoFormat {
   formatId: string;
@@ -117,8 +137,8 @@ export async function getVideoMetadata(url: string, proxy?: string): Promise<Vid
       '-4', // Force IPv4 to avoid slow DNS/IPv6 lookups
     ];
     
-    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-    if (fs.existsSync(cookiesPath)) {
+    const cookiesPath = getCookiesPath();
+    if (cookiesPath) {
       args.push('--cookies', cookiesPath);
     }
 
@@ -333,8 +353,8 @@ export async function startDownload(
     '--postprocessor-args', 'ffmpeg:-threads 0'
   ];
 
-  const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-  if (fs.existsSync(cookiesPath)) {
+  const cookiesPath = getCookiesPath();
+  if (cookiesPath) {
     args.push('--cookies', cookiesPath);
   }
 
