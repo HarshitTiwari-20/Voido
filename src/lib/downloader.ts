@@ -9,7 +9,13 @@ export function getCookiesPath(): string | null {
   if (process.env.YOUTUBE_COOKIES) {
     try {
       const tempCookiesPath = path.join(os.tmpdir(), 'youtube_cookies.txt');
-      fs.writeFileSync(tempCookiesPath, process.env.YOUTUBE_COOKIES, 'utf8');
+      let cookiesVal = process.env.YOUTUBE_COOKIES.trim();
+      if ((cookiesVal.startsWith('"') && cookiesVal.endsWith('"')) || 
+          (cookiesVal.startsWith("'") && cookiesVal.endsWith("'"))) {
+        cookiesVal = cookiesVal.slice(1, -1);
+      }
+      const cookiesContent = cookiesVal.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+      fs.writeFileSync(tempCookiesPath, cookiesContent, 'utf8');
       return tempCookiesPath;
     } catch (e) {
       console.error('Failed to write YOUTUBE_COOKIES environment variable to temp file:', e);
@@ -135,6 +141,7 @@ export async function getVideoMetadata(url: string, proxy?: string): Promise<Vid
       '--flat-playlist',
       '--no-warnings',
       '-4', // Force IPv4 to avoid slow DNS/IPv6 lookups
+      '--js-runtimes', `node:${process.execPath}`
     ];
     
     const cookiesPath = getCookiesPath();
@@ -350,7 +357,8 @@ export async function startDownload(
     '-o', outputTemplate,
     '--no-playlist',
     '--downloader-args', 'ffmpeg:-threads 0',
-    '--postprocessor-args', 'ffmpeg:-threads 0'
+    '--postprocessor-args', 'ffmpeg:-threads 0',
+    '--js-runtimes', `node:${process.execPath}`
   ];
 
   const cookiesPath = getCookiesPath();
