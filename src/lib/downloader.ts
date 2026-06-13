@@ -322,7 +322,9 @@ export async function startDownload(
     '--no-warnings',
     ...formatArgs,
     '-o', outputTemplate,
-    '--no-playlist'
+    '--no-playlist',
+    '--downloader-args', 'ffmpeg:-threads 0',
+    '--postprocessor-args', 'ffmpeg:-threads 0'
   ];
 
   if (proxy) {
