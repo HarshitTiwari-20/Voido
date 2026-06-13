@@ -116,6 +116,12 @@ export async function getVideoMetadata(url: string, proxy?: string): Promise<Vid
       '--no-warnings',
       '-4', // Force IPv4 to avoid slow DNS/IPv6 lookups
     ];
+    
+    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+    if (fs.existsSync(cookiesPath)) {
+      args.push('--cookies', cookiesPath);
+    }
+
     if (proxy) {
       args.push('--proxy', proxy);
     }
@@ -326,6 +332,11 @@ export async function startDownload(
     '--downloader-args', 'ffmpeg:-threads 0',
     '--postprocessor-args', 'ffmpeg:-threads 0'
   ];
+
+  const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+  if (fs.existsSync(cookiesPath)) {
+    args.push('--cookies', cookiesPath);
+  }
 
   if (proxy) {
     args.push('--proxy', proxy);
