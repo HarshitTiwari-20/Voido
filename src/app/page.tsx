@@ -36,6 +36,9 @@ export default function Home() {
     status: 'ready' | 'loading' | 'error';
     version?: string;
     message?: string;
+    cookiesConfigured?: boolean;
+    cookiesMode?: string;
+    warning?: string;
   }>({ status: 'loading' });
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -66,7 +69,13 @@ export default function Home() {
       const res = await fetch('/api/status');
       const data = await res.json();
       if (res.ok && data.status === 'ready') {
-        setYtdlpStatus({ status: 'ready', version: data.version });
+        setYtdlpStatus({
+          status: 'ready',
+          version: data.version,
+          cookiesConfigured: data.cookiesConfigured,
+          cookiesMode: data.cookiesMode,
+          warning: data.warning,
+        });
       } else {
         setYtdlpStatus({ status: 'error', message: data.message });
       }
@@ -85,7 +94,13 @@ export default function Home() {
         const data = await res.json();
         if (cancelled) return;
         if (res.ok && data.status === 'ready') {
-          setYtdlpStatus({ status: 'ready', version: data.version });
+          setYtdlpStatus({
+            status: 'ready',
+            version: data.version,
+            cookiesConfigured: data.cookiesConfigured,
+            cookiesMode: data.cookiesMode,
+            warning: data.warning,
+          });
         } else {
           setYtdlpStatus({ status: 'error', message: data.message });
         }
@@ -475,10 +490,23 @@ export default function Home() {
               }}
             >
               {ytdlpStatus.status === 'ready' && (
-                <>
-                  <span className="status-dot active" style={{ marginRight: '0.5rem' }}></span>
-                  <span style={{ fontSize: '0.8rem' }}>yt-dlp v{ytdlpStatus.version}</span>
-                </>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span className="status-dot active" style={{ marginRight: '0.5rem' }}></span>
+                    <span style={{ fontSize: '0.8rem' }}>yt-dlp v{ytdlpStatus.version}</span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      color: ytdlpStatus.cookiesConfigured ? 'var(--success)' : 'var(--warning)',
+                      paddingLeft: '1.1rem',
+                    }}
+                  >
+                    {ytdlpStatus.cookiesConfigured
+                      ? `Cookies: ${ytdlpStatus.cookiesMode || 'ok'}`
+                      : 'Cookies: missing (YouTube will fail on cloud)'}
+                  </span>
+                </div>
               )}
               {ytdlpStatus.status === 'loading' && (
                 <>
@@ -548,6 +576,27 @@ export default function Home() {
 
         {ytdlpStatus.status === 'ready' && (
           <>
+            {ytdlpStatus.warning && !error && (
+              <div
+                className="alert-banner"
+                style={{
+                  background: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  color: '#f59e0b',
+                  marginBottom: '1rem',
+                }}
+              >
+                <AlertCircle size={20} style={{ flexShrink: 0 }} />
+                <div style={{ fontSize: '0.9rem' }}>
+                  {ytdlpStatus.warning}{' '}
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    Local: run <code>./scripts/export-cookies-for-render.sh</code> then set{' '}
+                    <code>YOUTUBE_COOKIES_B64</code> on Render.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {error && (
               <div className="alert-banner error">
                 <AlertCircle size={20} style={{ flexShrink: 0 }} />

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getYtdlpPath, downloadYtdlp, updateYtdlp } from '@/lib/yt-dlp';
-import { getCookieArgs } from '@/lib/downloader';
+import { getCookieArgs, getCookiesSource, getDefaultProxy } from '@/lib/downloader';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -17,18 +17,21 @@ export async function GET() {
     const ytdlpPath = await getYtdlpPath();
     const { stdout } = await execAsync(`"${ytdlpPath}" --version`);
     const cookieArgs = getCookieArgs();
-    const cookiesMode =
-      cookieArgs[0] === '--cookies'
-        ? 'file'
-        : cookieArgs[0] === '--cookies-from-browser'
-          ? `browser:${cookieArgs[1]}`
-          : 'none';
+    const cookiesSource = getCookiesSource();
+    const cookiesConfigured = cookieArgs.length > 0;
+    const proxyConfigured = Boolean(getDefaultProxy());
 
     return NextResponse.json({
       status: 'ready',
       path: ytdlpPath,
       version: stdout.trim(),
-      cookiesMode,
+      cookiesMode: cookiesSource,
+      cookiesConfigured,
+      proxyConfigured,
+      // Hint for cloud deploys without cookies
+      warning: !cookiesConfigured
+        ? 'No YouTube cookies configured. YouTube will block most requests on cloud hosts (Render). Set YOUTUBE_COOKIES_B64.'
+        : undefined,
     });
   } catch (error: unknown) {
     return NextResponse.json(

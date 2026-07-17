@@ -21,39 +21,115 @@ export type {
   DownloadJob,
 };
 
+const ENV_COOKIES_PATH = path.join(os.tmpdir(), 'void-youtube-cookies.txt');
+const BROWSER_COOKIES_CACHE = path.join(os.tmpdir(), 'void-downloader-browser-cookies.txt');
+const BROWSER_COOKIES_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+const COOKIE_EXPORT_TIMEOUT_MS = 12_000;
+
+/**
+ * Normalize Netscape cookie file contents from env vars.
+ * Supports real newlines, escaped \n, and optional surrounding quotes.
+ */
+function normalizeCookieFileContents(raw: string): string {
+  let cookiesVal = raw.trim();
+  if (
+    (cookiesVal.startsWith('"') && cookiesVal.endsWith('"')) ||
+    (cookiesVal.startsWith("'") && cookiesVal.endsWith("'"))
+  ) {
+    cookiesVal = cookiesVal.slice(1, -1);
+  }
+  // Render / Docker often store multi-line secrets with literal \n
+  let content = cookiesVal.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  // Ensure Netscape header so yt-dlp accepts the file
+  if (!content.includes('# Netscape') && !content.includes('# HTTP Cookie File')) {
+    content = `# Netscape HTTP Cookie File\n${content}`;
+  }
+  return content;
+}
+
+function writeCookiesFile(content: string, dest: string): string | null {
+  try {
+    if (!content || content.length < 20) return null;
+    fs.writeFileSync(dest, content, 'utf8');
+    return dest;
+  } catch (e) {
+    console.error('Failed to write cookies file:', e);
+    return null;
+  }
+}
+
 /**
  * Resolve cookies for yt-dlp.
- * Priority:
- *  1. YOUTUBE_COOKIES env (Netscape cookie file contents)
- *  2. cookies.txt in project root
- *  3. YOUTUBE_COOKIES_FROM_BROWSER env (e.g. "chrome", "brave", "firefox")
- *  4. Auto-detect Chrome / Brave / Firefox profiles (local desktop)
+ * Priority (cloud/Render-friendly first):
+ *  1. YOUTUBE_COOKIES_FILE — path to an existing cookies file
+ *  2. YOUTUBE_COOKIES_B64 — base64-encoded Netscape cookies (best for Render env vars)
+ *  3. YOUTUBE_COOKIES — raw Netscape cookie file contents
+ *  4. cookies.txt in project root (local dev)
  */
 export function getCookiesPath(): string | null {
-  if (process.env.YOUTUBE_COOKIES) {
+  // 1. Explicit file path (e.g. secret mount)
+  const fileFromEnv = process.env.YOUTUBE_COOKIES_FILE?.trim();
+  if (fileFromEnv && fs.existsSync(fileFromEnv)) {
+    return fileFromEnv;
+  }
+
+  // 2. Base64 (recommended on Render — single-line secret)
+  if (process.env.YOUTUBE_COOKIES_B64) {
     try {
-      const tempCookiesPath = path.join(os.tmpdir(), 'youtube_cookies.txt');
-      let cookiesVal = process.env.YOUTUBE_COOKIES.trim();
-      if (
-        (cookiesVal.startsWith('"') && cookiesVal.endsWith('"')) ||
-        (cookiesVal.startsWith("'") && cookiesVal.endsWith("'"))
-      ) {
-        cookiesVal = cookiesVal.slice(1, -1);
-      }
-      const cookiesContent = cookiesVal.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
-      fs.writeFileSync(tempCookiesPath, cookiesContent, 'utf8');
-      return tempCookiesPath;
+      const decoded = Buffer.from(process.env.YOUTUBE_COOKIES_B64.trim(), 'base64').toString(
+        'utf8'
+      );
+      const written = writeCookiesFile(normalizeCookieFileContents(decoded), ENV_COOKIES_PATH);
+      if (written) return written;
     } catch (e) {
-      console.error('Failed to write YOUTUBE_COOKIES environment variable to temp file:', e);
+      console.error('Failed to decode YOUTUBE_COOKIES_B64:', e);
     }
   }
 
+  // 3. Raw cookie text in env
+  if (process.env.YOUTUBE_COOKIES) {
+    const written = writeCookiesFile(
+      normalizeCookieFileContents(process.env.YOUTUBE_COOKIES),
+      ENV_COOKIES_PATH
+    );
+    if (written) return written;
+  }
+
+  // 4. Local project file
   const localCookiesPath = path.join(process.cwd(), 'cookies.txt');
   if (fs.existsSync(localCookiesPath)) {
     return localCookiesPath;
   }
 
   return null;
+}
+
+/** Human-readable cookie source for status/UI */
+export function getCookiesSource(): 'file' | 'env' | 'env-b64' | 'env-file' | 'browser-cache' | 'none' {
+  if (process.env.YOUTUBE_COOKIES_FILE?.trim() && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE.trim())) {
+    return 'env-file';
+  }
+  if (process.env.YOUTUBE_COOKIES_B64) return 'env-b64';
+  if (process.env.YOUTUBE_COOKIES) return 'env';
+  if (fs.existsSync(path.join(process.cwd(), 'cookies.txt'))) return 'file';
+  if (fs.existsSync(BROWSER_COOKIES_CACHE)) {
+    try {
+      if (fs.statSync(BROWSER_COOKIES_CACHE).size > 100) return 'browser-cache';
+    } catch {
+      // ignore
+    }
+  }
+  return 'none';
+}
+
+/** Optional global proxy from env (useful on Render) */
+export function getDefaultProxy(): string {
+  return (
+    process.env.YOUTUBE_PROXY?.trim() ||
+    process.env.HTTPS_PROXY?.trim() ||
+    process.env.HTTP_PROXY?.trim() ||
+    ''
+  );
 }
 
 /**
@@ -108,10 +184,6 @@ function detectBrowserForCookies(): string | null {
 
   return null;
 }
-
-const BROWSER_COOKIES_CACHE = path.join(os.tmpdir(), 'void-downloader-browser-cookies.txt');
-const BROWSER_COOKIES_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-const COOKIE_EXPORT_TIMEOUT_MS = 12_000;
 
 /**
  * Export cookies from a local browser once and reuse the Netscape cookie file.
@@ -252,10 +324,14 @@ export async function ensureCookiesReady(): Promise<void> {
  * Shared yt-dlp flags used by both metadata and download.
  * Without cookies, force YouTube player clients that bypass bot checks (quality may be capped).
  * With cookies, use default clients so full DASH quality (720p/1080p/4K) is available.
+ *
+ * Note: on cloud hosts (Render, etc.) YouTube almost always requires cookies —
+ * datacenter IPs are blocked even with android clients.
  */
 export function getCommonYtdlpArgs(proxy?: string): string[] {
   const cookieArgs = getCookieArgs();
   const hasCookies = cookieArgs.length > 0;
+  const effectiveProxy = (proxy && proxy.trim()) || getDefaultProxy();
 
   const args: string[] = [
     '-4', // Force IPv4 to avoid slow DNS/IPv6 lookups
@@ -265,17 +341,26 @@ export function getCommonYtdlpArgs(proxy?: string): string[] {
     ...cookieArgs,
   ];
 
-  // Default clients need auth; android/web work unauthenticated but often only ~360p progressive.
+  // Default clients need auth; android/web help a bit without cookies (often still blocked on cloud).
   if (!hasCookies) {
     args.push('--extractor-args', 'youtube:player_client=android,web,mweb,tv');
   }
 
-  if (proxy) {
-    args.push('--proxy', proxy);
+  if (effectiveProxy) {
+    args.push('--proxy', effectiveProxy);
   }
 
-  if (fs.existsSync('/usr/bin/ffmpeg')) {
-    args.push('--ffmpeg-location', '/usr/bin/ffmpeg');
+  // Prefer explicit ffmpeg locations (Render/apt and common local paths)
+  const ffmpegCandidates = [
+    process.env.FFMPEG_PATH,
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+  ].filter(Boolean) as string[];
+  for (const ffmpegPath of ffmpegCandidates) {
+    if (fs.existsSync(ffmpegPath)) {
+      args.push('--ffmpeg-location', ffmpegPath);
+      break;
+    }
   }
 
   return args;
@@ -388,10 +473,20 @@ function extractErrorMessage(stderr: string, fallback: string): string {
     // Strip extractor prefix like "[youtube] id: "
     msg = msg.replace(/^\[[^\]]+\]\s*[^\s:]+:\s*/, '');
     if (/sign in to confirm/i.test(msg) || /not a bot/i.test(msg)) {
+      const source = getCookiesSource();
+      if (source === 'none') {
+        return (
+          'YouTube blocked this request (bot check). On Render/cloud you MUST set cookies: ' +
+          'export a Netscape cookies.txt while logged into YouTube, then set env var ' +
+          'YOUTUBE_COOKIES_B64 to base64 of that file (Render Dashboard → Environment). ' +
+          'Local: place cookies.txt in the project root. ' +
+          'Guide: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies'
+        );
+      }
       return (
-        'YouTube blocked this request (bot check). ' +
-        'Export cookies to cookies.txt in the project root, or keep Chrome/Brave logged into YouTube. ' +
-        'See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies'
+        'YouTube blocked this request even with cookies. Your cookies may be expired or incomplete. ' +
+        'Re-export fresh cookies while logged into youtube.com, update YOUTUBE_COOKIES_B64 (or cookies.txt), ' +
+        'and redeploy/restart. Also try a residential proxy via YOUTUBE_PROXY if the server IP is blocked.'
       );
     }
     return msg;
