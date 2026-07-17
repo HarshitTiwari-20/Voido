@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Loader2, CheckCircle, AlertTriangle, Play, Square, XOctagon } from 'lucide-react';
+import { Loader2, CheckCircle, AlertTriangle, XOctagon } from 'lucide-react';
 
 export interface QueueItem {
   id: string; // url or unique index

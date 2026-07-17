@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { PlaylistMetadata } from '@/lib/downloader';
-import { Download, List, CheckSquare, Square, Music, Video, User, Clock, Sliders, ChevronRight } from 'lucide-react';
+import React, { useState } from 'react';
+import type { PlaylistMetadata } from '@/lib/types';
+import { Download, List, CheckSquare, Square, User, Clock, Sliders } from 'lucide-react';
 
 interface PlaylistDetailsProps {
   metadata: PlaylistMetadata;
@@ -10,21 +10,13 @@ interface PlaylistDetailsProps {
 }
 
 export default function PlaylistDetails({ metadata, onStartBatchDownload }: PlaylistDetailsProps) {
+  // Parent remounts this component with key={metadata.url} when playlist changes
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    new Set(metadata.entries.map((e) => e.id))
+    () => new Set(metadata.entries.map((e) => e.id))
   );
   const [formatId, setFormatId] = useState<string>('720p');
-  
-  // Timeframe / Range Selector States (1-based index)
   const [startInput, setStartInput] = useState<string>('1');
-  const [endInput, setEndInput] = useState<string>(metadata.entries.length.toString());
-
-  // Keep inputs updated if metadata entries length changes
-  useEffect(() => {
-    setStartInput('1');
-    setEndInput(metadata.entries.length.toString());
-    setSelectedIds(new Set(metadata.entries.map((e) => e.id)));
-  }, [metadata]);
+  const [endInput, setEndInput] = useState<string>(() => metadata.entries.length.toString());
 
   const handleToggleSelectAll = () => {
     if (selectedIds.size === metadata.entries.length) {
@@ -344,9 +336,10 @@ export default function PlaylistDetails({ metadata, onStartBatchDownload }: Play
                 <option value="480p">480p (SD)</option>
                 <option value="360p">360p (SD)</option>
               </optgroup>
-              <optgroup label="Audio Only">
-                <option value="mp3">MP3 (High Quality)</option>
-                <option value="m4a">M4A (Original Quality)</option>
+              <optgroup label="Audio Only (Sound)">
+                <option value="mp3">MP3 — Sound Only</option>
+                <option value="m4a">M4A — Sound Only</option>
+                <option value="wav">WAV — Sound Only</option>
               </optgroup>
             </select>
 

@@ -32,7 +32,7 @@ export default function AnalyzerInput({ onAnalyze, isLoading, initialProxy }: An
     try {
       const text = await navigator.clipboard.readText();
       setUrl(text);
-    } catch (err) {
+    } catch {
       // Clipboard access not granted or not supported
     }
   };
@@ -100,7 +100,7 @@ export default function AnalyzerInput({ onAnalyze, isLoading, initialProxy }: An
             }}
           >
             <Settings size={14} />
-            {showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options (Proxy)'}
+            {showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options'}
           </button>
         </div>
 
@@ -114,7 +114,7 @@ export default function AnalyzerInput({ onAnalyze, isLoading, initialProxy }: An
               border: '1px solid var(--card-border)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '0.5rem',
+              gap: '0.75rem',
               animation: 'fadeIn 0.2s ease-out'
             }}
           >
@@ -138,6 +138,20 @@ export default function AnalyzerInput({ onAnalyze, isLoading, initialProxy }: An
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               Use if the website is blocked by your ISP, country, or has scraping rate limits.
             </span>
+            <div
+              style={{
+                fontSize: '0.75rem',
+                color: 'var(--text-muted)',
+                borderTop: '1px solid var(--card-border)',
+                paddingTop: '0.75rem',
+                lineHeight: 1.5,
+              }}
+            >
+              <strong style={{ color: 'var(--text-secondary)' }}>YouTube tip:</strong> for higher quality
+              and fewer bot blocks, place a Netscape <code>cookies.txt</code> in the project root
+              (export while logged into YouTube), or keep Chrome/Brave logged in so cookies can be
+              auto-detected.
+            </div>
           </div>
         )}
       </form>

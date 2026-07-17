@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { DownloadJob } from '@/lib/downloader';
+import type { DownloadJob } from '@/lib/types';
 import { Loader2, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface ProgressTrackerProps {

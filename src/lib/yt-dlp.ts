@@ -37,7 +37,7 @@ export async function getYtdlpPath(): Promise<string> {
     if (systemPath) {
       return systemPath;
     }
-  } catch (e) {
+  } catch {
     // Not found in system PATH
   }
 
@@ -94,7 +94,8 @@ export async function updateYtdlp(): Promise<string> {
   try {
     const { stdout } = await execAsync(`"${binaryPath}" -U`);
     return stdout;
-  } catch (error: any) {
-    throw new Error(`Failed to update yt-dlp: ${error.message}`);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to update yt-dlp: ${message}`);
   }
 }

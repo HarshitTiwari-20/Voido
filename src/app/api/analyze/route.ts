@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getVideoMetadata } from '@/lib/downloader';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
-    const { url, proxy } = await req.json();
+    const body = await req.json();
+    const url = typeof body?.url === 'string' ? body.url : '';
+    const proxy = typeof body?.proxy === 'string' ? body.proxy : undefined;
+
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
+
     const metadata = await getVideoMetadata(url, proxy);
     return NextResponse.json(metadata);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in analyze route:', error);
-    return NextResponse.json({ error: error.message || 'Failed to analyze URL' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to analyze URL';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

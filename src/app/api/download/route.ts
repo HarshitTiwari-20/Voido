@@ -20,45 +20,57 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
-      
-      const sendEvent = (event: string, data: any) => {
+
+      const sendEvent = (event: string, data: unknown) => {
         if (isClosed) return;
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch (e) {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch {
           // Stream might have been closed already
         }
       };
 
-      try {
-        await startDownload(url, formatId, title, thumbnail, (job) => {
-          sendEvent('progress', job);
-          
-          if (job.status === 'completed') {
-            sendEvent('complete', { downloadId: job.id, fileName: job.fileName });
-            isClosed = true;
-            try {
-              controller.close();
-            } catch (e) {}
-          } else if (job.status === 'failed') {
-            sendEvent('failed', { error: job.error });
-            isClosed = true;
-            try {
-              controller.close();
-            } catch (e) {}
-          }
-        }, proxy);
-      } catch (error: any) {
-        sendEvent('failed', { error: error.message || 'Failed to start download' });
+      const safeClose = () => {
+        if (isClosed) return;
         isClosed = true;
         try {
           controller.close();
-        } catch (e) {}
+        } catch {
+          // already closed
+        }
+      };
+
+      try {
+        await startDownload(
+          url,
+          formatId,
+          title,
+          thumbnail,
+          (job) => {
+            sendEvent('progress', job);
+
+            if (job.status === 'completed') {
+              sendEvent('complete', { downloadId: job.id, fileName: job.fileName });
+              safeClose();
+            } else if (job.status === 'failed') {
+              sendEvent('failed', { error: job.error });
+              safeClose();
+            }
+          },
+          proxy
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : 'Failed to start download';
+        sendEvent('failed', { error: message });
+        safeClose();
       }
     },
     cancel() {
       isClosed = true;
-    }
+    },
   });
 
   return new Response(stream, {
